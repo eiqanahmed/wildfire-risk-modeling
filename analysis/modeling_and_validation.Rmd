@@ -280,9 +280,9 @@ m2 <- lm(log(fm1000) ~ (tmmn + tmmx + pr) * cli + srad * season + vpd + vs + p, 
 m3 <- lm(I((fm1000^b - 1)/b) ~ (tmmn + tmmx + pr) * cli + srad * season + vpd + vs + p, data = wf_data)
 ```
 
-A log and Box-Cox transformation on Y greatly reduces the magnitude of the residuals and spreads it out more, as well as correcting the slight right tail in the QQ-plot. However, since a log transformation is more meaningful to interpret than a Box-Cox transformation, we decided to settle on m2 as our new model to correct violated constant variance assumption.  
+A log and Box-Cox transformation on Y greatly reduces the magnitude of the residuals and spreads it out more, as well as correcting the slight right tail in the QQ-plot. However, since a log transformation is more meaningful to interpret than a Box-Cox transformation, we decided to settle on m2 as my new model to correct violated constant variance assumption.  
 
-However, our nonlinearity violation hasn't been mitigated entirely. We turn to the residuals vs predictor plots for m2. The parabolic behaviour of tmmn, tmmx, and vpd carry over from m1 as expected. To counter this, we will transform X and compare the difference between the models.  
+However, the nonlinearity violation hasn't been mitigated entirely. We turn to the residuals vs predictor plots for m2. The parabolic behaviour of tmmn, tmmx, and vpd carry over from m1 as expected. To counter this, we will transform X and compare the difference between the models.  
 
 ```{r transforming prelim X}
 # Box-Cox for tmmn and tmmx together
@@ -309,7 +309,7 @@ res_vs_pred_plots(m6, "Model 6")
 
 Transforming vpd with sqrt fixes parabolic behaviour of vpd perfectly but sqrt(tmmn) and sqrt(tmmx) has no substantial difference in the residuals vs predictor plots across all of the new models (with and without sqrt(vpd)). Since temperature is on an absolute Kelvin scale, transformations risk losing physical meaning. For this reason, interpretability outweighs the slight diagnostic improvement for sqrt or Box-Cox transfomations on tmmn and tmmx, which has little to no change in adjusted R^2, AIC, and BIC measures.  
 
-The ANOVA overall test of signifiance for m6 yields significant results, meaning that at least one of the predictors has a linear relationship with our response. Looking at the t-tests of m6, we see that tmmn\*cli, tmmx\*cli (excluding tmmx:cliA), pr\*cli (excluding pr:cliB), and srad:seasonWinter are insignificant. As such, we conduct partial F-tests to determine what predictors we can drop and particularly, whether or not tmmn or tmmx explains the other entirely.  
+The ANOVA overall test of signifiance for m6 yields significant results, meaning that at least one of the predictors has a linear relationship with the response. Looking at the t-tests of m6, we see that tmmn\*cli, tmmx\*cli (excluding tmmx:cliA), pr\*cli (excluding pr:cliB), and srad:seasonWinter are insignificant. As such, we conduct partial F-tests to determine what predictors we can drop and particularly, whether or not tmmn or tmmx explains the other entirely.  
 
 ```{r prelim significance tests}
 # Create new subset models
@@ -334,7 +334,7 @@ cat("Partial F-test p-value: ", format.pval(anova(m11, m6)["Pr(>F)"][2, ]), "\n\
 vif(m6)
 ```
 
-Excluding different combinations of the insignificant variables from our current model, we see that any of the reduced models produced significant partial F-tests. Meaning, that all predictors from our current model are significant in explaining the relationship with the response and the other predictors. Furthermore, the exclusion of tmmn didn't benefit our model even though it is highly correlated with tmmx. We see that tmmn, tmmx, cli, and their interactions all have VIF values of over 50. This is consistent with another study where Lu et al. (2022) examined the drivers of forest fires in Yunnan Province, China, and found that minimum temperatures had exceeding VIF values indicating significant correlation. Although VIF>50 indicates strong multicollinearity, removing tmmn/tmmx would eliminate scientifically important predictors. Therefore we rely on partial F-tests rather than VIF alone.  
+Excluding different combinations of the insignificant variables from my current model, we see that any of the reduced models produced significant partial F-tests. Meaning, that all predictors from my current model are significant in explaining the relationship with the response and the other predictors. Furthermore, the exclusion of tmmn didn't benefit my model even though it is highly correlated with tmmx. We see that tmmn, tmmx, cli, and their interactions all have VIF values of over 50. This is consistent with another study where Lu et al. (2022) examined the drivers of forest fires in Yunnan Province, China, and found that minimum temperatures had exceeding VIF values indicating significant correlation. Although VIF>50 indicates strong multicollinearity, removing tmmn/tmmx would eliminate scientifically important predictors. Therefore we rely on partial F-tests rather than VIF alone.  
 
 ```{r prelim problematic observations}
 # Create table of problematic observations
@@ -376,7 +376,7 @@ anova(m13, m12)
 vif(m12)
 ```
 
-When our modified model is fitted on the dataset without cliE observations, we see that the t-test for tmmn and pr are insignificant and the VIF values are over the threshold for both. However since the partial F-test for a reduced model without tmmn is significant, we will remove tmmn from our preliminary model since tmmx highly coorelates with tmmn and shares the same information that tmmn has. Even though pr was insignificant in individual t-tests, the partial F-test indicated that the pr group contributes significantly to explaining variation in fm1000. Therefore pr remains in the final model.  
+When my modified model is fitted on the dataset without cliE observations, we see that the t-test for tmmn and pr are insignificant and the VIF values are over the threshold for both. However since the partial F-test for a reduced model without tmmn is significant, we will remove tmmn from my preliminary model since tmmx highly coorelates with tmmn and shares the same information that tmmn has. Even though pr was insignificant in individual t-tests, the partial F-test indicated that the pr group contributes significantly to explaining variation in fm1000. Therefore pr remains in the final model.  
 
 ```{r finalized prelim model}
 m12 <- lm(log(fm1000) ~ (tmmx + pr) * cli + srad * season + sqrt(vpd) + vs + p, data = wf_data_e)
@@ -435,14 +435,14 @@ which.max(summary(me)$adjr2)
 which.min(summary(me)$bic)
 ```
 
-Using both AIC and BIC, the former favouring slightly more complex models and the latter penalizing models with bigger samples, we see that Backward Selection gives us the full model with AIC and the full model without srad with BIC. Similarly, Forward Selection gives us the full model without srad with AIC and the full model with BIC. We also see from the Exhaustive search that the model with the highest adjusted R^2 and the lowest BIC is in fact the full model. The biggest issue with our dataset is that meteorological data is highly correlated and all affect each other in some way and automating variable selection doesn't take into account the interactions.  
+Using both AIC and BIC, the former favouring slightly more complex models and the latter penalizing models with bigger samples, we see that Backward Selection gives us the full model with AIC and the full model without srad with BIC. Similarly, Forward Selection gives us the full model without srad with AIC and the full model with BIC. We also see from the Exhaustive search that the model with the highest adjusted R^2 and the lowest BIC is in fact the full model. The biggest issue with the dataset is that meteorological data is highly correlated and all affect each other in some way and automating variable selection doesn't take into account the interactions.  
 
 Based off of the current literature, we have decided to rerun the variable selection but include the following interactions:  
 * season: everything excluding cli and p
 * cli: everything excluding season and p
 * tmmn, tmmx: rmin, rmax, sph, vpd, etr, pet  
 
-And similar to our preliminary model, we will exclude any observations from the climate zone E.  
+And similar to my preliminary model, we will exclude any observations from the climate zone E.  
 
 ```{r stepwise selection}
 # Full model with all interactions
@@ -522,7 +522,7 @@ theme_minimal()
 
 ```
 
-Since it's not feasible to run an exhaustive search on our full model with all of the interactions, we will only consider mfi_bic since it has the least number of variables. Even after adjusted, some VIF values from mfi_bic are very high such as tmmx, etr, fm100, and srad. As such, we'll exclude those variables due to multicolinearity and redundancy. Specifically, those variables carry the same information as tmmn, and vpd.  
+Since it's not feasible to run an exhaustive search on my full model with all of the interactions, we will only consider mfi_bic since it has the least number of variables. Even after adjusted, some VIF values from mfi_bic are very high such as tmmx, etr, fm100, and srad. As such, we'll exclude those variables due to multicolinearity and redundancy. Specifically, those variables carry the same information as tmmn, and vpd.  
 
 ```{r final models}
 prelim_m <- lm(fm1000 ~ (tmmn + tmmx + pr) * cli + srad * season + vpd + vs + p, data = wf_data_e)
@@ -628,7 +628,7 @@ kable(
 # 10-fold cross validation
 train_control <- trainControl(method = "cv", number = 10)
 
-# Train our final models
+# Train my final models
 cv_prelim_m <- train(formula(prelim_m), data = wf_data_e, method = "lm", trControl = train_control)
 cv_final_m <- train(formula(final_m), data = wf_data_e, method = "lm", trControl = train_control)
 cv_auto_m <- train(formula(auto_m), data = wf_data_e, method = "lm", trControl = train_control)
@@ -645,15 +645,15 @@ cv_metrics <- rbind(
 cv_metrics
 ```
 
-Due the sheer number of observations, we choose to run a 10-fold cross validation instead of LOOCV, reducing computational complexity and allowing us to compare out-of-sample error with MSE. From the results, we see that our transformed preliminary model has improved greatly with a higher R^2 and substantially lower MSE. On the other hand, the models from automated variable selection algorithms have a near perfect R^2 but a bigger MSE. This is to be expected because the auto models have much stronger predictive powers due to the number of variables and interactions included. The drawback is that it's harder to interpret, especially through the inclusion of various indices which are based on the meteorlogical variables themselves, like erc or bi. The strength of our final model lies in it's simplicity. Using only the necessary variables, we can actually explain the relationship between spatiotemporal and meteorological conditions and how it effects fm1000.  
+Due the sheer number of observations, we choose to run a 10-fold cross validation instead of LOOCV, reducing computational complexity and allowing us to compare out-of-sample error with MSE. From the results, we see that the transformed preliminary model has improved greatly with a higher R^2 and substantially lower MSE. On the other hand, the models from automated variable selection algorithms have a near perfect R^2 but a bigger MSE. This is to be expected because the auto models have much stronger predictive powers due to the number of variables and interactions included. The drawback is that it's harder to interpret, especially through the inclusion of various indices which are based on the meteorlogical variables themselves, like erc or bi. The strength of the final model lies in it's simplicity. Using only the necessary variables, we can actually explain the relationship between spatiotemporal and meteorological conditions and how it effects fm1000.  
 
-To further verify our models, we want to see whether or not it's a bad fit for non-wildfire events. If it is a good fit, then our models can't significantly distinguish between wildfire and non-wildfire events, meaning it's prediction power is diminished.  
+To further verify the models, we want to see whether or not it's a bad fit for non-wildfire events. If it is a good fit, then the models can't significantly distinguish between wildfire and non-wildfire events, meaning it's prediction power is diminished.  
 
 ```{r non-wildfire comparsion}
 full_data <- data[data$cli != "E", -c(1, 2, 3)]
 full_data$cli <- droplevels(full_data$cli)
 
-# Fit our models to full dataset
+# Fit the models to full dataset
 full_fm <- lm(log(fm1000) ~ Wildfire * ((tmmx + pr) * cli + srad * season + sqrt(vpd) + vs + p),
               data = full_data)
 full_am <- lm(fm1000 ~ Wildfire * (bi + pet + p
@@ -661,7 +661,7 @@ full_am <- lm(fm1000 ~ Wildfire * (bi + pet + p
               + cli * (erc + rmax + fm100 + bi + vpd + rmin + sph)), 
               data = full_data)
 
-# Reduce our models to full dataset
+# Reduce the models to full dataset
 red_fm <- lm(log(fm1000) ~ (tmmx + pr) * cli + srad * season + sqrt(vpd) + vs + p,
               data = full_data)
 red_am <- lm(fm1000 ~ bi + pet + p
@@ -674,11 +674,11 @@ anova(red_fm, full_fm)
 anova(red_am, full_am)
 ```
 
-Fitting our model to the full dataset, which includes non-wildfire events, we see that the partial F-tests comparing a full model with Wildfire and all of it's interactions and a reduced model without Wildfire is significant for both our final model and automated with interactions model. This confirms that the pattern between variables differ significantly between wildfires and non-wildfires.  
+Fitting the model to the full dataset, which includes non-wildfire events, we see that the partial F-tests comparing a full model with Wildfire and all of it's interactions and a reduced model without Wildfire is significant for both the final model and automated with interactions model. This confirms that the pattern between variables differ significantly between wildfires and non-wildfires.  
 
 ## Interpretation and Predictions  
 
-Using our final model for interpretability, the significiant negative coefficients are srad, sqrt(vpd), and tmmx \* cli (excluding cliA). Again, this is consistent with scientific evidence because higher srad encourages evaporation and higher sqrt(vpd) means the actual vapor pressure is lower so the air is less humid. Even though tmmx has positive coefficient in cliA or tropical climates, this is explained by the fact that tropical climates experience frequent precipitation. So a higher tmmx would lead to more humid air (which dries out the fuel less). In other less precipitate climates, tmmx has a negative coefficient. Based on the categorical variables, in colder seasons and climates with more precipitation and live vegetation, there is an increase in fm1000, which supports our previous findings with the weather conditions. Thus, our findings show that the biggest impacts on fm1000 is the temperature, vapor-pressure deficit, solar radiation and fuel availability and efficacy dependent on the time of year and climate zone.  
+Using my final model for interpretability, the significiant negative coefficients are srad, sqrt(vpd), and tmmx \* cli (excluding cliA). Again, this is consistent with scientific evidence because higher srad encourages evaporation and higher sqrt(vpd) means the actual vapor pressure is lower so the air is less humid. Even though tmmx has positive coefficient in cliA or tropical climates, this is explained by the fact that tropical climates experience frequent precipitation. So a higher tmmx would lead to more humid air (which dries out the fuel less). In other less precipitate climates, tmmx has a negative coefficient. Based on the categorical variables, in colder seasons and climates with more precipitation and live vegetation, there is an increase in fm1000, which supports my previous findings with the weather conditions. Thus, my findings show that the biggest impacts on fm1000 is the temperature, vapor-pressure deficit, solar radiation and fuel availability and efficacy dependent on the time of year and climate zone.  
 
 ```{r model_risk}
 model_risk <- function(model, point, threshold) {
@@ -698,119 +698,4 @@ model_risk <- function(model, point, threshold) {
 }
 ```
 
-Given that a MLR model satisfies Y|X ~ N(X$\beta$, $\sigma^2$), we used the prediction interval for a given observation to quantify risk. The function model_risk uses the distribution of the prediction interval for a future observation to find the probability of log(fm1000) being less than some pre-defined threshold, usually around ~15-10% based on region and climate. Note that even though we're using our final model instead of the automated with interactions model because there is some evidence of overfitting with the higher adjusted R^2 and MSE. Additionally, since our final model is easier to interpret and more accurate due to it's lower MSE, it was selected to predict and quantify risk.   
-
-```{r Figures}
-install.packages("maps")
-
-df <- read.csv("Cleaned_Wildfire_Dataset.csv")
-
-# FIGURE 1
- 
-library(ggplot2)
-library(maps)
-
-# Load US map outline
-us_map <- map_data("state")
-
-# Recode climate zones to descriptive names
-df$cli_zone <- factor(
-   df$cli,
-   levels = c("A", "B", "C", "D", "E"),
-   labels = c(
-     "Tropical (A)",
-     "Arid / Dry (B)",
-     "Temperate (C)",
-     "Cold / Continental (D)",
-     "Polar (E)"
-   )
- )
- 
-# Create the plot
-ggplot() +
-   # U.S. map outline
-   geom_polygon(
-     data = us_map,
-     aes(x = long, y = lat, group = group),
-     fill = "gray95",
-     color = "black",
-     size = 0.2
-   ) +
-   
-   # Wildfire observation points, colored by climate zone
-   geom_point(
-     data = df,
-     aes(x = longitude, y = latitude, color = cli_zone),
-     alpha = 0.5,
-     size = 0.7
-   ) +
-   
-   # Color palette for climate zones
-   scale_color_brewer(palette = "Dark2", name = "Climate Zone") +
-   
-   # Titles and labels
-   labs(
-     title = "Figure 1.\nSpatial Distribution of Wildfire Observations Across Climate Zones",
-     x = "Longitude",
-     y = "Latitude"
-   ) +
-   
-   coord_fixed(1.3) +
-   
-   theme_minimal(base_size = 14) +
-   theme(
-     plot.title = element_text(
-       hjust = 0.5,
-       size = 14,
-       face = "bold",
-       margin = margin(t = 10, b = 10)
-     ),
-     plot.margin = margin(t = 20, r = 20, b = 20, l = 20),
-     legend.position = "right",
-     panel.grid = element_blank()
-   )
-
-
-# FIGURE 2:
-# Install if needed:
-# install.packages("ggplot2")
-
-library(ggplot2)
-
-# Recode climate zones to descriptive names (skip if already done earlier)
-df$cli_zone <- factor(
-  df$cli,
-  levels = c("A", "B", "C", "D", "E"),
-  labels = c(
-    "Tropical (A)",
-    "Arid / Dry (B)",
-    "Temperate (C)",
-    "Cold / Continental (D)",
-    "Polar (E)"
-  )
-)
-
-# Create Figure 2: Boxplot of fm1000 by climate zone
-ggplot(df, aes(x = cli_zone, y = fm1000, fill = cli_zone)) +
-  geom_boxplot(outlier.alpha = 0.15) +
-  labs(
-    title = "Figure 2.\nfm1000 Variation Across Climate Zones",
-    x = "Climate Zone",
-    y = "fm1000 (%)"
-  ) +
-  theme_minimal(base_size = 14) +
-  theme(
-    plot.title = element_text(
-      hjust = 0.5,
-      size = 14,
-      face = "bold",
-      margin = margin(t = 10, b = 10)
-    ),
-    plot.margin = margin(t = 20, r = 20, b = 20, l = 20),
-    legend.position = "none",              # hide redundant legend
-    panel.grid.major.x = element_blank(),  # cleaner boxplot look
-    axis.text.x = element_text(angle = 20, hjust = 1)
-  )
-
-
-```
+Given that a MLR model satisfies Y|X ~ N(X$\beta$, $\sigma^2$), we used the prediction interval for a given observation to quantify risk. The function model_risk uses the distribution of the prediction interval for a future observation to find the probability of log(fm1000) being less than some pre-defined threshold, usually around ~15-10% based on region and climate. Note that even though the final model is being used instead of the automated with interactions model because there is some evidence of overfitting with the higher adjusted R^2 and MSE. Additionally, since the final model is easier to interpret and more accurate due to it's lower MSE, it was selected to predict and quantify risk.   
