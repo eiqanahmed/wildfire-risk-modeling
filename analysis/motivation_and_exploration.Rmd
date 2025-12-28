@@ -1,0 +1,270 @@
+```{r setup, include=FALSE}
+#install.packages("kgc")
+library(tidyverse)
+library(rmarkdown)
+library(knitr)
+library(pander)
+library(dplyr)
+library(kgc)
+
+panderOptions("table.caption.prefix", "")
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+## **Introduction**  
+
+*Research Question:* How do the spatiotemporal (prior wildfires, climate zone) and average weekly meteorological conditions (temperature, precipitation, vapor pressure deficit, solar radiation, wind speed) affect the 1000-hour dead fuel moisture content, in locations where a wildfire occurred the following day?  
+
+The 1000-hour dead fuel moisture content (fm1000) is the moisture content percentage of 1000-hour dead fuel, which are large fuels (3-9 inches in diameter).  
+
+Three peer-reviewed studies highlight the dependence of fm1000 and prior wildfire activity on meteorological and moisture conditions. Xu et al. (2025) reviewed different wildfire risk models and consistently identified fuel moisture, temperature, humidity, precipitation, and wind speed as key variables, noting that high temperatures, low relative humidity, low precipitation, and strong winds increase wildfire risk. Huet et al. (2022), studying wildfire spread across the US, found that the Energy Release Component (erc) and prior wildfire presence were the strongest predictors of next-day wildfire spread. Cooke et al. (2012) examined wildfires across Mississippi, noting that precipitation, potential evapotranspiration, and the Keetch-Bryam Drought Index significantly increased the probability of wildfires. Because fm1000 determines how readily fuels ignite, and these processes depend on temperature, humidity, and precipitation, it is reasonable to expect fm1000 itself to vary with meteorological and spatial conditions. Thus, these studies collectively justify using spatiotemporal and meteorological predictors to model fm1000.  
+
+Building on these findings, a simpler statistical approach cannot capture the direction, magnitude, and combined effects of multiple predictors. For instance, vapor pressure deficit (vpd), defined as the difference between actual and maximum air moisture, varies with temperature (Xu et al., 2025).  
+
+A linear regression model allows us to describe the general starting conditions for a wildfire and to test new observations against it. The slope coefficient quantifies the direction and magnitude of each predictor’s effect on the response, holding the rest constant. This quantifies the direct impact of increasing precipitation or lowering the temperature on fm1000. The t-tests and F-tests allow us to test the significance of the predictors on the response, allowing us to identify negligible predictors for wildfire risk. A prediction interval gives us a range within which a new observation of fm1000 is likely to fall, allowing us to assess wildfire risk.  
+
+The results of this study will help researchers through wildfire risk model validation and prediction accuracy. Furthermore, it supports wildfire prevention agencies with resource allocation and early interventions by mapping out areas of high risk.  
+
+```{r data loading and cleaning}
+# Load wildfire dataset and save it to data
+data <- read.csv("/Users/Mustafa/Documents/sta302proj/Wildfire_Dataset.csv")
+
+# Removing unnecessary columns
+data <- data[, c("datetime", "latitude", "longitude", "Wildfire", "tmmn", "tmmx", "pr", "vpd", "srad", "vs", "fm1000")]
+
+# Extracting rows where Wildfire == "Yes" and the date is the ignition day
+wf_data <- data[data$Wildfire == "Yes", c("datetime", "latitude", "longitude")]
+wf_data <- wf_data[seq(1, nrow(wf_data), 15), ]
+wf_data$datetime <- as.Date(wf_data$datetime)
+wf_data <- wf_data[order(wf_data$datetime), ]
+
+# Deriving climate zones for each wildfire event
+cz_data <- wf_data
+cz_data$latitude <- RoundCoordinates(cz_data$latitude)
+cz_data$longitude <- RoundCoordinates(cz_data$longitude)
+names(cz_data)[2:3] <- c("rndCoord.lat", "rndCoord.lon")
+wf_data <- cbind(wf_data, cli = LookupCZ(cz_data))
+wf_data$cli <- substr(as.character(wf_data$cli), 1, 1)
+
+# Deriving the astronomical seasons for each wildfire event
+dates <- wf_data$datetime
+wf_data <- wf_data %>%
+  mutate(season = case_when(
+    format(dates, "%m-%d") >= "03-21" & format(dates, "%m-%d") <= "06-20" ~ "Spring",
+    format(dates, "%m-%d") >= "06-21" & format(dates, "%m-%d") <= "09-20" ~ "Summer",
+    format(dates, "%m-%d") >= "09-21" & format(dates, "%m-%d") <= "12-20" ~ "Fall",
+    TRUE ~ "Winter"
+    ))
+
+# Extracting 7-day windows for each wildfire
+wk_rpos <- unlist(lapply(as.numeric(rownames(wf_data)), function(x) (x - 7):(x - 1)))
+wk_data <- data[wk_rpos, -4]
+
+# Compute the averages for each variable over the 7-day window
+cols <- c("tmmn", "tmmx", "pr", "vpd", "srad", "vs", "fm1000")
+
+for (col in cols) {
+  wf_data[[col]] <- colMeans(matrix(wk_data[[col]], nrow = 7))
+}
+
+# Counting the prior wildfire for each wildfire event
+wf_data <- wf_data %>%
+  dplyr::group_by(latitude, longitude) %>%
+  dplyr::mutate(n = dplyr::row_number() - 1) %>%
+  dplyr::ungroup() %>%
+  as.data.frame()
+
+wf_data <- wf_data[, c("season", "cli", "tmmn", "tmmx", "pr", "vpd", "srad", "vs", "n", "fm1000")]
+
+# Add interaction to dataset
+wf_data <- wf_data %>%
+  mutate(
+    srad_A = ifelse(cli == "A", srad, 0),
+    srad_B = ifelse(cli == "B", srad, 0),
+    srad_C = ifelse(cli == "C", srad, 0),
+    srad_D = ifelse(cli == "D", srad, 0),
+    srad_E = ifelse(cli == "E", srad, 0)
+    )
+
+wf_data <- wf_data %>%
+  mutate(
+    tmmn_A = ifelse(cli == "A", tmmn, 0),
+    tmmn_B = ifelse(cli == "B", tmmn, 0),
+    tmmn_C = ifelse(cli == "C", tmmn, 0),
+    tmmn_D = ifelse(cli == "D", tmmn, 0),
+    tmmn_E = ifelse(cli == "E", tmmn, 0)
+    )
+
+wf_data <- wf_data %>%
+  mutate(
+    tmmx_A = ifelse(cli == "A", tmmx, 0),
+    tmmx_B = ifelse(cli == "B", tmmx, 0),
+    tmmx_C = ifelse(cli == "C", tmmx, 0),
+    tmmx_D = ifelse(cli == "D", tmmx, 0),
+    tmmx_E = ifelse(cli == "E", tmmx, 0)
+    )
+
+wf_data <- wf_data %>%
+  mutate(
+    pr_A = ifelse(cli == "A", pr, 0),
+    pr_B = ifelse(cli == "B", pr, 0),
+    pr_C = ifelse(cli == "C", pr, 0),
+    pr_D = ifelse(cli == "D", pr, 0),
+    pr_E = ifelse(cli == "E", pr, 0)
+    )
+```
+
+## **Data Description**  
+
+Our dataset was sourced from Kaggle and curated to train predictive wildfire models for helitack suppression (Mathur et. al, 2025). It contains ~126800 daily, high-resolution (~4 km) meteorological records from gridMET, aligned with wildfire ignition labels from Integrated Reporting of Wildland Fire Information (IRWIN). Each sample expands into a 75-day window: 60 days prior (wildfire = No), ignition day (wildfire = Yes), and 14 days after (wildfire = Yes).  
+
+Numerical predictors include minimum and maximum temperature (tmmn, tmmx), precipitation (pr), vapor pressure deficit (vpd), solar radiation (srad), and wind speed (vs). Categorical predictors are astronomical season (Spring, Summer, Fall, Winter), climate zone (A–E, Köppen-Geiger classification), and prior wildfire counts (n).  
+
+The response variable, 1000-hour dead fuel moisture content (fm1000), measures the moisture percentage of large dead fuels. Averaged over the last seven days of each positive ignition window, fm1000 ranges from 2.5–35.1%, with a mean of 13.1% and slight right skew. Thus, observations are independent and reasonably continuous, making fm1000 suitable for linear regression (Table 1).  
+
+```{r response_summary, results='asis'}
+pander(summary(wf_data$fm1000), style = "rmarkdown", 
+       justify = rep("center", 6))
+
+cat("\\begin{flushleft}{\\footnotesize Table 1: \\textit{Summary statistics for our response variable, the 1000-hour dead fuel moisture content (fm1000).}}\\end{flushleft}")
+```
+
+Note that pr and vpd are highly right-skewed and that srad is highly left-skewed, reflecting variability in meteorological conditions (Table 2).  
+
+```{r predictor_summary, results='asis'}
+vars <- c("tmmx", "tmmn", "pr", "vpd", "vs", "srad", "n")
+
+summary_list <- lapply(wf_data[vars], summary)
+summary_table_numerical <- do.call(cbind, summary_list)
+summary_table_numerical <- t(summary_table_numerical)
+
+pander(summary_table_numerical)
+
+cat("\\begin{flushleft}{\\footnotesize Table 2: \\textit{Summary statistics for all numerical predictors in the dataset.}}\\end{flushleft}")
+```
+
+The Köppen-Geiger climate zones are based on seasonal precipitation and temperature (Kottek et. Al, 2006). We categorized each observation by climate zone since it’s more meaningful than raw latitude and longitude and included the interactions for pr\*cli, tmmn\*cli, and tmmx\*cli (Table 3).  
+
+```{r cli_summary, results='asis'}
+vars2 <- c("pr_A", "pr_B", "pr_C", "pr_D", "pr_E", "tmmn_A", "tmmn_B", "tmmn_C", "tmmn_D", "tmmn_E", "tmmx_A", "tmmx_B", "tmmx_C", "tmmx_D", "tmmx_E")
+
+summary_list2 <- lapply(wf_data[vars2], summary)
+summary_table_interaction <- do.call(cbind, summary_list2)
+summary_table_interaction <- t(summary_table_interaction)
+
+pander(summary_table_interaction)
+
+cat("\\begin{flushleft}{\\footnotesize Table 3: \\textit{Summary statistics of climate (cli) interactions with pr, tmmn, and tmmx.}}\\end{flushleft}")
+```
+
+Astronomical seasons are based on the Earth’s orbit, which affects solar radiation received (U.S. Department of Commerce, n.d.). We categorized each observation by season and included the interaction srad*season (Table 4).  
+
+```{r srad_summary, results='asis'}
+vars3 <- c("srad_A", "srad_B", "srad_C", "srad_D", "srad_E")
+
+summary_list3 <- lapply(wf_data[vars3], summary)
+summary_table_interaction_3 <- do.call(cbind, summary_list3)
+summary_table_interaction_3 <- t(summary_table_interaction_3)
+
+pander(summary_table_interaction_3)
+
+cat("\\begin{flushleft}{\\footnotesize Table 4: \\textit{Summary statistics of climate (cli) interactions with solar radiation (srad).}}\\end{flushleft}")
+```
+
+Including interactions allows the model to account for how meteorological predictors influence fm1000 differently across climates and seasons, consistent with the literature (Xu et.al, 2025).  
+
+## **Ethics Discussion**  
+
+gridMET is a dataset developed by the Climatology Lab, whose work involves understanding climate variability and climate impacts on resources and society (Abatzoglou, n.d.). The meteorological data from gridMET is generated by using climate data from PRISM, which is a collection of weather observations from a wide range of monitoring networks and applies sophisticated quality control measures (Northwest Alliance for Computational Science & Engineering, n.d.). Additionally, gridMET also blends in regional land surface estimates from NASA’s North American Land Data Assimilation System (NLDAS) (NASA, n.d.). All datasets are open for public use and research with clear documentation on how data is collected, spatial and temporal resolution, and quality control processes.  
+
+IRWIN is a Wildland Fire Information and Technology affiliated investment intended to provide an “end-to-end” fire reporting capability, with recorded wildfires being accessed through open data (U.S. Department of Agriculture, n.d.).  
+
+Regarding ethical collection and use, the dataset has been gathered ethically, as it relies on publicly available meteorological measurements and official wildfire records. No personal or sensitive individual data is included, mitigating concerns about privacy violations. This dataset was specifically used to enhance the accuracy, efficiency, and real-time responsiveness of wildfire forecasting and analysis (Mathur et. al, 2025). Thus, the data usage in this project aligns with the intended purposes of the original sources: supporting and improving wildfire prediction and mitigation.  
+
+In conclusion, since the dataset meets the ethical criteria (consent, privacy, and ownership), our dataset can not only be considered highly trustworthy, but our analysis of it is in line with the original sources of data.  
+
+## **Preliminary Results**  
+
+```{r prelim_results_plots, results='asis'}
+model <- lm(fm1000 ~ (tmmn + tmmx + pr) * cli + srad*season + vpd + vs + n, data = wf_data)
+
+r_model <- residuals(model)
+f_model <- fitted(model)
+
+par(mfrow = c(1, 3), mar = c(5.1, 4.1, 0.1, 2.1), pty = "s")
+
+plot(fm1000 ~ r_model, ylab = "Response", xlab = "Fitted", data = wf_data, cex = 0.2)
+plot(r_model ~ f_model, ylab = "Residuals", xlab = "Fitted", data = wf_data, cex = 0.2)
+qqnorm(r_model, main = "")
+qqline(r_model)
+
+cat("\\begin{flushleft}{\\footnotesize Figure 1: \\textit{Response vs Fitted Values, Residuals vs Fitted Values, and Normal-QQ Plots for our preliminary model.}}\\end{flushleft}")
+```
+
+Looking at the response vs. fitted values graph, the linearity assumption is violated due to the concave shape. There is an upwards fanning trend which indicates non-constant variance. Additionally, the Normal-QQ Plot also shows a deviation in the right tail, which might suggest that the normal errors assumption has been violated.  
+
+Due to these two conditions being violated, it becomes unclear whether other violations observed in subsequent residual plots are due to true model issues or simply a consequence of these primary assumption failures and transformations must be applied to the data.  
+
+```{r prelim_results_summary, results='asis'}
+summary_model_prelim <- summary(model)
+
+pander(summary_model_prelim)
+
+cat("\\begin{flushleft}{\\footnotesize Table 5: \\textit{Preliminary linear model coefficients for fm1000 with standard errors and 95\\% confidence intervals.}}\\end{flushleft}")
+```
+
+From our preliminary model, tmmx, pr, vpd, vs, n, seasons, and the interaction srad\*season (except for Spring) are significant, which aligns with our findings. It is unexpected to see that the coefficient of tmmx is positive. This isn't consistent with the general trends found in Xu et. al (2025). Additionally, the interaction terms with cli are all insignificant, suggesting that their effects on fm1000 do not meaningfully vary across climate classifications. Furthermore, the temperate (C) and continental (D) climate zones were the only significant ones from the other levels. These unexpected values may change appropriately once we fix the violated assumptions of this preliminary model.  
+
+```{r figure 2, results='asis'}
+pairs(wf_data[, c("tmmn","tmmx","pr","vpd","srad","vs")], cex = 0.2)
+
+cat("\\begin{flushleft}{\\footnotesize Figure 2: \\textit{Pairs plots of all of our numerical predictors.}}\\end{flushleft}")
+```
+The pairs plot indicates that tmmn and tmmx are strongly positively correlated, while predictors like pr and vs show little correlation with other predictors. These patterns suggest potential multicollinearity between temperature variables, which may affect coefficient estimates in the preliminary model.  
+
+## **Plan**  
+
+The first step will be to correct the violated assumptions (non-linearity, non-constant variance, and non-normal errors). Since there is a fanning and upwards trend in the response vs. fitted values graphs, similar to a square-root relationship, a Box-Cox transformation will be applied to the response in order to correct the non-linearity and non-normal errors. The R function powerTransform() will be used to determine the most appropriate power. After each transformation or model adjustment, model assumptions will be reassessed to determine whether the conditional mean and variance assumptions have improved. If violations between predictors and the response persist, variance-stabilizing transformations (such as log or square-root) will be applied to specific predictors as needed.  
+
+Once assumptions are satisfied, we will use the transformed variables in a new model to see which variables are significant. If a variable is still not significant even after the corrections of violations (ex. climate and solar radiation interaction term), additional research will be conducted to conclude whether or not it is appropriate to remove the variable. Key meteorological variables such as temperature, vapor pressure deficit, precipitation, and wind speed will remain in all models because prior studies state they play an important role in drying moisture from dead fuel (Xu et. al, 2025).  
+
+A tentative schedule to complete the project is outlined below:  
+
+1. Oct 27 - Nov 2: Correct violated assumptions and refine model
+2. Nov 3 - Nov 9: Amend proposal with process of their analysis and the results of the performed data analysis
+3. Nov 10 - Nov 16: Turn proposal into poster
+4. Nov 17 - Nov 23: Practice and record video presentation
+5. Nov 24 - Nov 27: Finishing touches and extra work days
+DUE DATE: Nov 28  
+
+All members will work on each section and a weekly Saturday meeting will be held to go over results.
+
+\newpage
+## **References**  
+[1] Abatzoglou, J. (n.d.). GridMET. Climatology Lab. <https://www.climatologylab.org/gridmet.html>  
+
+[2] Cooke, W. H., Mostovoy, G. V., Anantharaj, V. G., & Jolly, W. M. (2013). Wildfire Potential Mapping over the State of Mississippi: A Land Surface Modeling Approach. GIScience & Remote Sensing, 49(4), 492–509. <https://doi.org/10.2747/1548-1603.49.4.492>  
+
+[3] Huet, F., Hu, R. L., Goyal, N., Sankar, T., Ihme, M., & Chen, Y.-F. (2022). Next Day Wildfire Spread: A Machine Learning Dataset to Predict Wildfire Spreading From Remote-Sensing Data. IEEE Transactions on Geoscience and Remote Sensing, 60, 1–13. <https://doi.org/10.1109/tgrs.2022.3192974>  
+
+[4] Kottek, M., Grieser, J., Beck, C., Rudolf, B., & Rubel, F. (2006). World Map of the Köppen-Geiger climate classification updated. Meteorologische Zeitschrift, 15(3), 259–263. <https://doi.org/10.1127/0941-2948/2006/0130>  
+
+[5] Mathur, S., Manjunath, S. B., & Kulkarni, N. (2025). Spatiotemporal wildfire prediction and reinforcement learning for helitack suppression [Data set]. <https://www.kaggle.com/datasets/firecastrl/us-wildfire-dataset>  
+
+[6] NASA. (n.d.-a). NLDAS: Project Goals. <https://ldas.gsfc.nasa.gov/nldas>  
+
+[7] Northwest Alliance for Computational Science & Engineering. (n.d.). PRISM Weather Data. PRISM Group at Oregon State University. <https://prism.oregonstate.edu/>  
+
+[8] U.S. Department of Agriculture. (n.d.). Data Management - Integrated Reporting of Wildfire Information (IRWIN). Wildland Fire Application Information Portal. <https://www.wildfire.gov/application/irwin-integrated-reporting-wildfire-information>  
+
+[9] U.S. Department of Agriculture. (n.d.). Data Management - Integrated Reporting of Wildfire Information (IRWIN). Wildland Fire Application Information Portal.
+<https://www.wildfire.gov/application/irwin-integrated-reporting-wildfire-information>  
+
+[10] U.S. Department of Commerce. (n.d.). Changing seasons. National Oceanic and Atmospheric Administration. <https://www.noaa.gov/education/resource-collections/climate/changing-seasons>  
+
+[11] Xu, Z., Li, J., Cheng, S., Rui, X., Zhao, Y., He, H., Guan, H., Sharma, A., Erxleben, M., Chang, R., & Xu, L. (2025). Deep Learning for Wildfire Risk Prediction: Integrating Remote Sensing and Environmental Data. <https://doi.org/10.48550/arXiv.2405.01607>  
