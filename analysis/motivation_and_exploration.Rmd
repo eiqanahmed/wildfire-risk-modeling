@@ -121,7 +121,7 @@ wf_data <- wf_data %>%
 
 ## **Data Description**  
 
-Our dataset was sourced from Kaggle and curated to train predictive wildfire models for helitack suppression (Mathur et. al, 2025). It contains ~126800 daily, high-resolution (~4 km) meteorological records from gridMET, aligned with wildfire ignition labels from Integrated Reporting of Wildland Fire Information (IRWIN). Each sample expands into a 75-day window: 60 days prior (wildfire = No), ignition day (wildfire = Yes), and 14 days after (wildfire = Yes).  
+The dataset was sourced from Kaggle and curated to train predictive wildfire models for helitack suppression (Mathur et. al, 2025). It contains ~126800 daily, high-resolution (~4 km) meteorological records from gridMET, aligned with wildfire ignition labels from Integrated Reporting of Wildland Fire Information (IRWIN). Each sample expands into a 75-day window: 60 days prior (wildfire = No), ignition day (wildfire = Yes), and 14 days after (wildfire = Yes).  
 
 Numerical predictors include minimum and maximum temperature (tmmn, tmmx), precipitation (pr), vapor pressure deficit (vpd), solar radiation (srad), and wind speed (vs). Categorical predictors are astronomical season (Spring, Summer, Fall, Winter), climate zone (A–E, Köppen-Geiger classification), and prior wildfire counts (n).  
 
@@ -131,7 +131,7 @@ The response variable, 1000-hour dead fuel moisture content (fm1000), measures t
 pander(summary(wf_data$fm1000), style = "rmarkdown", 
        justify = rep("center", 6))
 
-cat("\\begin{flushleft}{\\footnotesize Table 1: \\textit{Summary statistics for our response variable, the 1000-hour dead fuel moisture content (fm1000).}}\\end{flushleft}")
+cat("\\begin{flushleft}{\\footnotesize Table 1: \\textit{Summary statistics for the response variable, the 1000-hour dead fuel moisture content (fm1000).}}\\end{flushleft}")
 ```
 
 Note that pr and vpd are highly right-skewed and that srad is highly left-skewed, reflecting variability in meteorological conditions (Table 2).  
@@ -148,7 +148,7 @@ pander(summary_table_numerical)
 cat("\\begin{flushleft}{\\footnotesize Table 2: \\textit{Summary statistics for all numerical predictors in the dataset.}}\\end{flushleft}")
 ```
 
-The Köppen-Geiger climate zones are based on seasonal precipitation and temperature (Kottek et. Al, 2006). We categorized each observation by climate zone since it’s more meaningful than raw latitude and longitude and included the interactions for pr\*cli, tmmn\*cli, and tmmx\*cli (Table 3).  
+The Köppen-Geiger climate zones are based on seasonal precipitation and temperature (Kottek et. Al, 2006). I categorized each observation by climate zone since it’s more meaningful than raw latitude and longitude and included the interactions for pr\*cli, tmmn\*cli, and tmmx\*cli (Table 3).  
 
 ```{r cli_summary, results='asis'}
 vars2 <- c("pr_A", "pr_B", "pr_C", "pr_D", "pr_E", "tmmn_A", "tmmn_B", "tmmn_C", "tmmn_D", "tmmn_E", "tmmx_A", "tmmx_B", "tmmx_C", "tmmx_D", "tmmx_E")
@@ -162,7 +162,7 @@ pander(summary_table_interaction)
 cat("\\begin{flushleft}{\\footnotesize Table 3: \\textit{Summary statistics of climate (cli) interactions with pr, tmmn, and tmmx.}}\\end{flushleft}")
 ```
 
-Astronomical seasons are based on the Earth’s orbit, which affects solar radiation received (U.S. Department of Commerce, n.d.). We categorized each observation by season and included the interaction srad*season (Table 4).  
+Astronomical seasons are based on the Earth’s orbit, which affects solar radiation received (U.S. Department of Commerce, n.d.). I categorized each observation by season and included the interaction srad*season (Table 4).  
 
 ```{r srad_summary, results='asis'}
 vars3 <- c("srad_A", "srad_B", "srad_C", "srad_D", "srad_E")
@@ -186,7 +186,7 @@ IRWIN is a Wildland Fire Information and Technology affiliated investment intend
 
 Regarding ethical collection and use, the dataset has been gathered ethically, as it relies on publicly available meteorological measurements and official wildfire records. No personal or sensitive individual data is included, mitigating concerns about privacy violations. This dataset was specifically used to enhance the accuracy, efficiency, and real-time responsiveness of wildfire forecasting and analysis (Mathur et. al, 2025). Thus, the data usage in this project aligns with the intended purposes of the original sources: supporting and improving wildfire prediction and mitigation.  
 
-In conclusion, since the dataset meets the ethical criteria (consent, privacy, and ownership), our dataset can not only be considered highly trustworthy, but our analysis of it is in line with the original sources of data.  
+In conclusion, since the dataset meets the ethical criteria (consent, privacy, and ownership), the dataset can not only be considered highly trustworthy, but this analysis of it is in line with the original sources of data.  
 
 ## **Preliminary Results**  
 
@@ -203,7 +203,7 @@ plot(r_model ~ f_model, ylab = "Residuals", xlab = "Fitted", data = wf_data, cex
 qqnorm(r_model, main = "")
 qqline(r_model)
 
-cat("\\begin{flushleft}{\\footnotesize Figure 1: \\textit{Response vs Fitted Values, Residuals vs Fitted Values, and Normal-QQ Plots for our preliminary model.}}\\end{flushleft}")
+cat("\\begin{flushleft}{\\footnotesize Figure 1: \\textit{Response vs Fitted Values, Residuals vs Fitted Values, and Normal-QQ Plots for the preliminary model.}}\\end{flushleft}")
 ```
 
 Looking at the response vs. fitted values graph, the linearity assumption is violated due to the concave shape. There is an upwards fanning trend which indicates non-constant variance. Additionally, the Normal-QQ Plot also shows a deviation in the right tail, which might suggest that the normal errors assumption has been violated.  
@@ -218,12 +218,12 @@ pander(summary_model_prelim)
 cat("\\begin{flushleft}{\\footnotesize Table 5: \\textit{Preliminary linear model coefficients for fm1000 with standard errors and 95\\% confidence intervals.}}\\end{flushleft}")
 ```
 
-From our preliminary model, tmmx, pr, vpd, vs, n, seasons, and the interaction srad\*season (except for Spring) are significant, which aligns with our findings. It is unexpected to see that the coefficient of tmmx is positive. This isn't consistent with the general trends found in Xu et. al (2025). Additionally, the interaction terms with cli are all insignificant, suggesting that their effects on fm1000 do not meaningfully vary across climate classifications. Furthermore, the temperate (C) and continental (D) climate zones were the only significant ones from the other levels. These unexpected values may change appropriately once we fix the violated assumptions of this preliminary model.  
+From the preliminary model, tmmx, pr, vpd, vs, n, seasons, and the interaction srad\*season (except for Spring) are significant, which aligns with my findings. It is unexpected to see that the coefficient of tmmx is positive. This isn't consistent with the general trends found in Xu et. al (2025). Additionally, the interaction terms with cli are all insignificant, suggesting that their effects on fm1000 do not meaningfully vary across climate classifications. Furthermore, the temperate (C) and continental (D) climate zones were the only significant ones from the other levels. These unexpected values may change appropriately once the violated assumptions of this preliminary model are fixed.  
 
 ```{r figure 2, results='asis'}
 pairs(wf_data[, c("tmmn","tmmx","pr","vpd","srad","vs")], cex = 0.2)
 
-cat("\\begin{flushleft}{\\footnotesize Figure 2: \\textit{Pairs plots of all of our numerical predictors.}}\\end{flushleft}")
+cat("\\begin{flushleft}{\\footnotesize Figure 2: \\textit{Pairs plots of all of the numerical predictors.}}\\end{flushleft}")
 ```
 The pairs plot indicates that tmmn and tmmx are strongly positively correlated, while predictors like pr and vs show little correlation with other predictors. These patterns suggest potential multicollinearity between temperature variables, which may affect coefficient estimates in the preliminary model.  
 
@@ -231,7 +231,7 @@ The pairs plot indicates that tmmn and tmmx are strongly positively correlated, 
 
 The first step will be to correct the violated assumptions (non-linearity, non-constant variance, and non-normal errors). Since there is a fanning and upwards trend in the response vs. fitted values graphs, similar to a square-root relationship, a Box-Cox transformation will be applied to the response in order to correct the non-linearity and non-normal errors. The R function powerTransform() will be used to determine the most appropriate power. After each transformation or model adjustment, model assumptions will be reassessed to determine whether the conditional mean and variance assumptions have improved. If violations between predictors and the response persist, variance-stabilizing transformations (such as log or square-root) will be applied to specific predictors as needed.  
 
-Once assumptions are satisfied, we will use the transformed variables in a new model to see which variables are significant. If a variable is still not significant even after the corrections of violations (ex. climate and solar radiation interaction term), additional research will be conducted to conclude whether or not it is appropriate to remove the variable. Key meteorological variables such as temperature, vapor pressure deficit, precipitation, and wind speed will remain in all models because prior studies state they play an important role in drying moisture from dead fuel (Xu et. al, 2025).  
+Once assumptions are satisfied, transformed variables will be used in a new model to see which variables are significant. If a variable is still not significant even after the corrections of violations (ex. climate and solar radiation interaction term), additional research will be conducted to conclude whether or not it is appropriate to remove the variable. Key meteorological variables such as temperature, vapor pressure deficit, precipitation, and wind speed will remain in all models because prior studies state they play an important role in drying moisture from dead fuel (Xu et. al, 2025).  
 
 A tentative schedule to complete the project is outlined below:  
 
