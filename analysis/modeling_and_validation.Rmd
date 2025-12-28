@@ -1,0 +1,816 @@
+## Setup  
+
+```{r setup, include=FALSE}
+#install.packages("pacman")
+pacman::p_load(tidyverse, MASS, leaps, caret, car, kgc, knitr, rmarkdown, pander, tinytex)
+
+panderOptions("table.caption.prefix", "")
+
+knitr::opts_chunk$set(
+  echo = FALSE,
+  message = FALSE,
+  warning = FALSE
+)
+```
+
+```{r data-cleaning, eval=FALSE}
+# Load wildfire dataset, change the name in the line below to what you named the original dataset file that you downloaded
+d <- read.csv("wildfire_dataset.csv")
+d$id <- rep(1:(nrow(d) / 75), each = 75)
+
+# Clean wildfire dataset
+pos <- c("pr", "rmax", "rmin", "sph", "srad", "tmmn", "tmmx", 
+         "vs", "bi", "fm100", "fm1000", "erc", "etr", "pet", "vpd")
+bou <- c("rmax", "rmin", "fm100", "fm1000")
+
+d <- d %>%
+  drop_na() %>%
+  filter(across(pos, ~.x >= 0)) %>%
+  filter(across(bou, ~.x <= 100))
+
+d <- d %>%
+  group_by(id) %>%
+  filter(n() == 75) %>%
+  ungroup() %>%
+  dplyr::select(-id)
+
+# Compute 7-day averages
+n <- nrow(d)
+s <- sequence(rep(7, each = (n / 75)), seq(53, n, by = 75))
+
+a <- as.matrix(d[s, -(1:4)])
+a <- colMeans(matrix(a, nrow = 7))
+a <- matrix(a, ncol = 15)
+
+a <- as.data.frame(a)
+names(a) <- colnames(d)[-(1:4)]
+
+a[, colnames(d)[1:4]] <- d[seq(61, n, by = 75), 1:4]
+
+# Counting the prior wildfire for each wildfire event
+a <- a %>%
+  dplyr::group_by(.data$latitude, .data$longitude) %>%
+  dplyr::mutate(p = dplyr::row_number() - 1) %>%
+  dplyr::ungroup()
+
+# Convert datetime to astronomical seasons
+a$datetime <- as.Date(a$datetime)
+
+a <- a %>%
+  mutate(month_day = format(datetime, "%m-%d"),
+         season = case_when(
+           month_day >= "03-21" & month_day <= "06-20" ~ "Spring",
+           month_day >= "06-21" & month_day <= "09-20" ~ "Summer",
+           month_day >= "09-21" & month_day <= "12-20" ~ "Fall",
+           TRUE ~ "Winter")
+         ) %>%
+  dplyr::select(-month_day)
+
+a$season <- as.factor(a$season)
+
+# Convert latitude and longitude to climate zones
+a$latitude <- RoundCoordinates(a$latitude)
+a$longitude <- RoundCoordinates(a$longitude)
+
+coords <- a[, c("latitude", "longitude")]
+names(coords) <- c("rndCoord.lat", "rndCoord.lon")
+
+a$cli <- LookupCZ(coords)
+a$cli <- substr(as.character(a$cli), 1, 1)
+
+a$cli <- as.factor(a$cli)
+a$Wildfire <- as.factor(a$Wildfire)
+
+# Save cleaned dataset
+a <- a[, c("datetime", "latitude", "longitude", "season", "cli", "Wildfire",
+           "tmmn", "tmmx", "pr", "rmin", "rmax", "sph", "vpd", "etr", "pet",
+           "srad", "vs", "erc", "bi", "fm100", "fm1000", "p")]
+
+write.csv(a, "Cleaned_Wildfire_Dataset.csv", row.names = FALSE)
+```
+
+```{r data-loading}
+data <- read.csv("Cleaned_Wildfire_Dataset.csv")
+
+data$season <- as.factor(data$season)
+data$cli <- as.factor(data$cli)
+data$Wildfire <- as.factor(data$Wildfire)
+
+wf_data <- data[data$Wildfire == "Yes", -c(1, 2, 3, 6)]
+nwf_data <- data[data$Wildfire == "No", -c(1, 2, 3, 6)]
+```
+
+## Helper Functions  
+
+```{r model_fit}
+model_fit <- function(model, pdf_name = NULL) {
+  
+  # Creates pdf_name if one is not provided
+  if (is.null(pdf_name)) {
+    pdf_name <- paste0(deparse(substitute(model)), "_diag_plots.pdf")
+  }
+  
+  # Save user par settings and restore on exit
+  op <- par(no.readonly = TRUE)
+  on.exit(par(op))
+  
+  # Extracts num preds used in model
+  data <- model.frame(model)
+  num_preds <- names(Filter(is.numeric, data[-1]))
+  
+  # Opens PDF in proj directory
+  pdf(file = file.path(getwd(), pdf_name), width = 11, height = 8.5)
+  
+  # Generates Res and Std. Res vs Fit Plots, QQ-Plots, and Std. Res vs Lev Plots
+  par(mfrow = c(2, 2), mar = c(4, 4, 2, 1))
+  
+  plot(model, caption = "", cook.levels = 1, labels.id = NULL, 
+       cex.id = 0.5, cook.legendChanges = NULL)
+  
+  par(mfrow = c(1, 1))
+  
+  # Generates Res vs Pred Plots
+  par(ask = FALSE)
+  
+  n <- 4 * ceiling(length(num_preds) / 4)  
+  layout(matrix(1:n, ncol = 4, byrow = TRUE))
+  par(mar = c(4, 4, 2, 1))
+  
+  res <- residuals(model)
+  
+  for (p in num_preds) {
+    plot(
+      data[[p]],
+      res,
+      xlab = p,
+      ylab = "Residuals",
+      cex = 0.5
+      )
+    lines(lowess(data[[p]], res), col="red", lwd=1, lty=1)
+    abline(h = 0, lty = 3, col = "gray")
+  }
+    
+  par(mfrow = c(1, 1))
+  
+  # Generates Scatterplot of Preds
+  num_vars <- names(Filter(is.numeric, data))
+  
+  pairs(data[, num_vars], cex = 0.5)
+  
+  # Saves to PDF
+  dev.off()
+  message("PDF saved to: ", file.path(getwd(), pdf_name))
+  }
+```
+
+```{r function for residual vs. predictor plots helper function}
+res_vs_pred_plots <- function(model, model_name = "Model") {
+  data <- model.frame(model)
+  numeric_preds <- names(Filter(is.numeric, data[-1]))
+  residuals <- residuals(model)
+
+  n <- length(numeric_preds)
+  rows <- ceiling(n / 3)
+
+  par(mfrow = c(rows, 3), mar = c(4,4,2,1))
+
+  for (p in numeric_preds) {
+    plot(
+      data[[p]], residuals,
+      xlab = p,
+      ylab = "Residuals",
+      main = paste(model_name, ":", p),
+      cex = 0.6,
+      pch = 16,
+      col = "gray40"
+    )
+    abline(h = 0, lty = 2, col = "darkgray")
+    lines(lowess(data[[p]], residuals), col = "red", lwd = 2)
+  }
+
+  par(mfrow = c(1,1))
+}
+```
+
+```{r model_struct}
+model_struct <- function(model) {
+  
+  s <- summary(model)
+  
+  # ANOVA test for overall significance
+  f <- s$fstatistic
+  cat("p-value: ", format.pval(pf(f[1], f[2], f[3], lower.tail = FALSE),
+                               digits = 16, eps = 2.2e-16), "\n\n")
+  
+  # Insignificant t-tests
+  p_vals <- s$coefficients[, 4]
+  insig <- names(p_vals[p_vals > 0.05])
+  
+  cat("Insignificant Variables (p-value > 0.05): \n")
+  
+  if (length(insig) == 0) {
+    cat("None\n\n")
+  } else {
+    cat(insig, "\n\n")
+  }
+  
+  # Coefficients of determination
+  cat("R²: ", s$r.squared, "\n")
+  cat("Adjusted R²: ", s$adj.r.squared, "\n")
+  
+  invisible(NULL)
+}
+```
+
+```{r model_inf}
+model_inf <- function(model) {
+  
+  p <- length(coef(model))
+  n <- nrow(model.frame(model))
+  
+  # Set cutoffs for problematic points
+  if (n >= 50) {
+    cut_r <- 4
+  } else {
+    cut_r <- 2
+  }
+  cut_h <- 2 * p / n
+  cut_cook <- qf(0.5, p, n - p)
+  cut_dffits <- 2 * sqrt(p/n)
+  cut_dfb <- 2 / sqrt(n)
+  
+  # Standardized res, leverage, Cook's D, DFFITS, DFBETAS
+  r      <- rstandard(model)
+  h      <- hatvalues(model)
+  cook   <- cooks.distance(model)
+  dffits <- dffits(model)
+  dfb    <- dfbetas(model)
+  
+  # Creating table of problematic points
+  problem_table <- data.frame(
+    outlier = as.integer(abs(r) > cut_r),
+    leverage = as.integer(h > cut_h),
+    cook.d = as.integer(cook > cut_cook),
+    dffits = as.integer(abs(dffits) > cut_dffits),
+    dfbetas = rowSums(abs(dfb) > cut_dfb)
+  )
+  
+  problem_table$fails <- rowSums(problem_table)
+  problem_table <- problem_table[problem_table$fails > 0, ]
+  problem_table <- problem_table[order(problem_table$fails, decreasing = TRUE), ]
+  
+  return(problem_table)
+}
+```
+
+## Preliminary Model  
+
+From the diagnostics plots of the preliminary model, there is a mild increase in variance at higher fitted values, indicating heteroscedasticity and nonlinearity. There is a slight right skewedness from the QQ-plot. Note that there is strong colinearity with tmmn and tmmx for obvious reasons, but this is consistent with the literature (Xu et. al, 2025). We proceed by transforming Y to fix non-constant variance and nonlinearity.  
+
+```{r transforming prelim Y}
+# Preliminary model
+m1 <- lm(fm1000 ~ (tmmn + tmmx + pr) * cli + srad * season + vpd + vs + p, data = wf_data)
+
+# Box-Cox for fm1000
+b <- boxcox(m1)
+b <- b$x[b$y == max(b$y)]
+
+# Create new transformed Y models
+m2 <- lm(log(fm1000) ~ (tmmn + tmmx + pr) * cli + srad * season + vpd + vs + p, data = wf_data)
+m3 <- lm(I((fm1000^b - 1)/b) ~ (tmmn + tmmx + pr) * cli + srad * season + vpd + vs + p, data = wf_data)
+```
+
+A log and Box-Cox transformation on Y greatly reduces the magnitude of the residuals and spreads it out more, as well as correcting the slight right tail in the QQ-plot. However, since a log transformation is more meaningful to interpret than a Box-Cox transformation, we decided to settle on m2 as our new model to correct violated constant variance assumption.  
+
+However, our nonlinearity violation hasn't been mitigated entirely. We turn to the residuals vs predictor plots for m2. The parabolic behaviour of tmmn, tmmx, and vpd carry over from m1 as expected. To counter this, we will transform X and compare the difference between the models.  
+
+```{r transforming prelim X}
+# Box-Cox for tmmn and tmmx together
+p <- powerTransform(model.frame(m2)[, c("tmmn", "tmmx")])
+p1 <- p$lambda[1]
+p2 <- p$lambda[2]
+
+# Create new transformed X models
+m4 <- lm(log(fm1000) ~ (sqrt(tmmn) + sqrt(tmmx) + pr) * cli + srad * season + sqrt(vpd) + vs + p, data = wf_data)
+m5 <- lm(log(fm1000) ~ (sqrt(tmmn) + sqrt(tmmx) + pr) * cli + srad * season + vpd + vs + p, data = wf_data)
+m6 <- lm(log(fm1000) ~ (tmmn + tmmx + pr) * cli + srad * season + sqrt(vpd) + vs + p, data = wf_data)
+m7 <- lm(log(fm1000) ~ (I((tmmn^p1 - 1)/p1) + I((tmmx^p2 - 1)/p2) + pr) * cli + srad * season
+         + sqrt(vpd) + vs + p, data = wf_data)
+
+# Goodness criteria for model fit
+(c(summary(m4)$adj.r.squared, extractAIC(m4, k=2)[2], extractAIC(m4, k=log(nrow(wf_data)))[2]))
+(c(summary(m5)$adj.r.squared, extractAIC(m5, k=2)[2], extractAIC(m5, k=log(nrow(wf_data)))[2]))
+(c(summary(m6)$adj.r.squared, extractAIC(m6, k=2)[2], extractAIC(m6, k=log(nrow(wf_data)))[2]))
+(c(summary(m7)$adj.r.squared, extractAIC(m7, k=2)[2], extractAIC(m7, k=log(nrow(wf_data)))[2]))
+
+# residual vs predictor plot for M6
+res_vs_pred_plots(m6, "Model 6")
+```
+
+Transforming vpd with sqrt fixes parabolic behaviour of vpd perfectly but sqrt(tmmn) and sqrt(tmmx) has no substantial difference in the residuals vs predictor plots across all of the new models (with and without sqrt(vpd)). Since temperature is on an absolute Kelvin scale, transformations risk losing physical meaning. For this reason, interpretability outweighs the slight diagnostic improvement for sqrt or Box-Cox transfomations on tmmn and tmmx, which has little to no change in adjusted R^2, AIC, and BIC measures.  
+
+The ANOVA overall test of signifiance for m6 yields significant results, meaning that at least one of the predictors has a linear relationship with our response. Looking at the t-tests of m6, we see that tmmn\*cli, tmmx\*cli (excluding tmmx:cliA), pr\*cli (excluding pr:cliB), and srad:seasonWinter are insignificant. As such, we conduct partial F-tests to determine what predictors we can drop and particularly, whether or not tmmn or tmmx explains the other entirely.  
+
+```{r prelim significance tests}
+# Create new subset models
+m8 <- lm(log(fm1000) ~ tmmn + tmmx + pr + cli + srad * season + sqrt(vpd) + vs + p, data = wf_data)
+m9 <- lm(log(fm1000) ~ tmmx + pr + cli + srad * season + sqrt(vpd) + vs + p, data = wf_data)
+m10 <- lm(log(fm1000) ~ tmmn + tmmx + cli + srad * season + sqrt(vpd) + vs + p, data = wf_data)
+m11 <- lm(log(fm1000) ~ tmmx + cli + srad * season + sqrt(vpd) + vs + p, data = wf_data)
+
+# Partial F-tests and analysis of variance
+model_struct(m8)
+cat("Partial F-test p-value: ", format.pval(anova(m8, m6)["Pr(>F)"][2, ]), "\n\n")
+
+model_struct(m9)
+cat("Partial F-test p-value: ", format.pval(anova(m9, m6)["Pr(>F)"][2, ]), "\n\n")
+
+model_struct(m10)
+cat("Partial F-test p-value: ", format.pval(anova(m10, m6)["Pr(>F)"][2, ]), "\n\n")
+
+model_struct(m11)
+cat("Partial F-test p-value: ", format.pval(anova(m11, m6)["Pr(>F)"][2, ]), "\n\n")
+
+vif(m6)
+```
+
+Excluding different combinations of the insignificant variables from our current model, we see that any of the reduced models produced significant partial F-tests. Meaning, that all predictors from our current model are significant in explaining the relationship with the response and the other predictors. Furthermore, the exclusion of tmmn didn't benefit our model even though it is highly correlated with tmmx. We see that tmmn, tmmx, cli, and their interactions all have VIF values of over 50. This is consistent with another study where Lu et al. (2022) examined the drivers of forest fires in Yunnan Province, China, and found that minimum temperatures had exceeding VIF values indicating significant correlation. Although VIF>50 indicates strong multicollinearity, removing tmmn/tmmx would eliminate scientifically important predictors. Therefore we rely on partial F-tests rather than VIF alone.  
+
+```{r prelim problematic observations}
+# Create table of problematic observations
+i <- model_inf(m6)
+head(i)
+summary(i)
+
+# Summary tables for problematic observations
+head(model.frame(m6)[rownames(i), ])
+summary(model.frame(m6)[rownames(i), ])
+```
+
+Using the standard cutoffs of h_ii > 2(p+1)/n, |r_i| > 4, and D_i > median of F(p + 1, n - p - 1), influence diagnostics show that all cliE points exceed Cook’s D, leverage, and standardized residual cutoffs. It corresponds to polar climate zones (Antarctica, Arctic, and Greenland), which are not very populated, and only contains 5 observations, making it more outlier-like than representative. As such, the deletion of cliE points is justified, especially since it isn't meaningful when it comes to wildfire risk in populated areas of the world.   
+
+```{r reduced model}
+# Refit the model
+wf_data_e <- wf_data[wf_data$cli != "E", ]
+wf_data_e$cli <- droplevels(wf_data_e$cli)
+
+m12 <- lm(log(fm1000) ~ (tmmn + tmmx + pr) * cli + srad * season + sqrt(vpd) + vs + p, data = wf_data_e)
+res_vs_pred_plots(m12, "Model 12")
+
+# Analysis of variance
+model_struct(m12)
+
+# Create table of problematic observations
+head(model_inf(m12))
+summary(model_inf(m12))
+
+# Summary tables for problematic observations
+head(model.frame(m12)[rownames(model_inf(m12)), ])
+summary(model.frame(m12)[rownames(model_inf(m12)), ])
+
+# Partial F-test
+m13 <- lm(log(fm1000) ~ tmmx * cli + srad * season + sqrt(vpd) + vs + p, data = wf_data_e)
+
+anova(m13, m12)
+
+vif(m12)
+```
+
+When our modified model is fitted on the dataset without cliE observations, we see that the t-test for tmmn and pr are insignificant and the VIF values are over the threshold for both. However since the partial F-test for a reduced model without tmmn is significant, we will remove tmmn from our preliminary model since tmmx highly coorelates with tmmn and shares the same information that tmmn has. Even though pr was insignificant in individual t-tests, the partial F-test indicated that the pr group contributes significantly to explaining variation in fm1000. Therefore pr remains in the final model.  
+
+```{r finalized prelim model}
+m12 <- lm(log(fm1000) ~ (tmmx + pr) * cli + srad * season + sqrt(vpd) + vs + p, data = wf_data_e)
+```
+
+## Automated Models  
+
+```{r full and null models}
+# Create full and null models
+mf <- lm(fm1000 ~ ., data = wf_data)
+mn <- lm(fm1000 ~ 1, data = wf_data)
+```
+
+Using both AIC and BIC, we will use different variable selection algorithms such as Backward/Forward selection and Exhaustive search. We begin by fitting the full model and correct any violated assumptions as needed. Automated selection was conducted on the untransformed response for comparability across models, but interpretability and assumption-checking later relied on transformations.  
+
+```{r transforming full Y}
+# Box-Cox for fm1000
+b2 <- boxcox(mf)
+b2 <- b2$x[b2$y == max(b2$y)]
+
+# Transform Y for full model
+mf2 <- lm(log(fm1000) ~ ., data = wf_data)
+mf3 <- lm(I((fm1000^b - 1)/b) ~ ., data = wf_data)
+```
+
+From the diagnostic plots, we see that all assumptions are satisfied except for the normality of errors due to the extreme right skewedness in the QQ-plot. Neither transformation on Y has mitigated this due to some very influential points.  
+
+```{r full problematic observations}
+# Create table of problematic observations
+i2 <- model_inf(mf)
+head(i2)
+summary(i2)
+
+# Summary tables for problematic observations
+head(model.frame(mf)[rownames(i2), ])
+summary(model.frame(mf)[rownames(i2), ])
+
+vif(mf)
+```
+
+Compared to m12, mf has slightly less problematic points but the total number of failed cutoffs is substantially bigger. Additionally, m12 had no high leverage outliers while mf has 44 high leverage outliers with the average number of failed cutoffs being 20.  
+
+```{r automated selection}
+# Backward selection models
+mb_aic <- stepAIC(mf, scope = list(lower = mn), direction = "backward", k = 2)
+mb_bic <- stepAIC(mf, scope = list(lower = mn), direction = "backward", k = log(nrow(wf_data)))
+
+# Forward selection models
+mf_aic <- stepAIC(mn, scope = list(upper = mf), direction = "forward", k = 2)
+mf_bic <- stepAIC(mn, scope = list(upper = mf), direction = "forward", k = log(nrow(wf_data)))
+
+# Exhaustive search models
+me <- regsubsets(fm1000 ~., data = wf_data, nbest = 1, nvmax = 22)
+
+which.max(summary(me)$adjr2)
+which.min(summary(me)$bic)
+```
+
+Using both AIC and BIC, the former favouring slightly more complex models and the latter penalizing models with bigger samples, we see that Backward Selection gives us the full model with AIC and the full model without srad with BIC. Similarly, Forward Selection gives us the full model without srad with AIC and the full model with BIC. We also see from the Exhaustive search that the model with the highest adjusted R^2 and the lowest BIC is in fact the full model. The biggest issue with our dataset is that meteorological data is highly correlated and all affect each other in some way and automating variable selection doesn't take into account the interactions.  
+
+Based off of the current literature, we have decided to rerun the variable selection but include the following interactions:  
+* season: everything excluding cli and p
+* cli: everything excluding season and p
+* tmmn, tmmx: rmin, rmax, sph, vpd, etr, pet  
+
+And similar to our preliminary model, we will exclude any observations from the climate zone E.  
+
+```{r stepwise selection}
+# Full model with all interactions
+mfi <- lm(fm1000 ~ cli + p
+  + season * (tmmn + tmmx + rmin + rmax + sph + vpd + etr + pet + srad + vs + erc + bi + fm100)
+  + cli * (tmmn + tmmx + rmin + rmax + sph + vpd + etr + pet + srad + vs + erc + bi + fm100)
+  + tmmn * (rmin + rmax + sph + vpd + etr + pet)
+  + tmmx * (rmin + rmax + sph + vpd + etr + pet), data = wf_data_e)
+
+# Backward selection models with interactions
+mbi_aic <- stepAIC(mfi, scope = list(lower = mn), direction = "backward", k = 2)
+mbi_bic <- stepAIC(mfi, scope = list(lower = mn), direction = "backward", k = log(nrow(wf_data_e)))
+
+# Forward selection models with interactions
+mfi_aic <- stepAIC(mn, scope = list(upper = mfi), direction = "forward", k = 2)
+mfi_bic <- stepAIC(mn, scope = list(upper = mfi), direction = "forward", k = log(nrow(wf_data_e)))
+
+vif(mfi_bic, type = "predictor")
+
+## ---- Run regsubsets to obtain forward-selection path ----
+
+## stepAIC does NOT store the full forward path, so we recreate it using regsubsets()
+
+me_forward <- regsubsets(
+fm1000 ~ cli + p
++ season * (tmmn + tmmx + rmin + rmax + sph + vpd + etr + pet + srad + vs + erc + bi + fm100)
++ cli * (tmmn + tmmx + rmin + rmax + sph + vpd + etr + pet + srad + vs + erc + bi + fm100)
++ tmmn * (rmin + rmax + sph + vpd + etr + pet)
++ tmmx * (rmin + rmax + sph + vpd + etr + pet),
+data = wf_data_e,
+nbest = 1,
+method = "forward"
+)
+
+fsum <- summary(me_forward)
+
+# Extract number of variables in each forward model
+
+num_vars <- apply(fsum$which[, -1], 1, sum)
+
+# Extract BIC and Adjusted R2 values
+
+bic_vals <- fsum$bic
+adjr2_vals <- fsum$adjr2
+
+
+
+# dataframe for plotting
+forward_df <- data.frame(
+NumVars = num_vars,
+BIC = bic_vals,
+AdjR2 = adjr2_vals
+)
+
+
+# Forward BIC vs. # Variable Plot
+ggplot(forward_df, aes(x = NumVars, y = BIC)) +
+geom_line() +
+geom_point() +
+labs(
+title = "Forward BIC vs Number of Variables",
+x = "Number of Variables",
+y = "BIC"
+) +
+theme_minimal()
+
+# Forward R^2 vs # Variables Plot
+ggplot(forward_df, aes(x = NumVars, y = AdjR2)) +
+geom_line() +
+geom_point() +
+labs(
+title = "Forward Adjusted R² vs Number of Variables",
+x = "Number of Variables",
+y = "Adjusted R²"
+) +
+theme_minimal()
+
+```
+
+Since it's not feasible to run an exhaustive search on our full model with all of the interactions, we will only consider mfi_bic since it has the least number of variables. Even after adjusted, some VIF values from mfi_bic are very high such as tmmx, etr, fm100, and srad. As such, we'll exclude those variables due to multicolinearity and redundancy. Specifically, those variables carry the same information as tmmn, and vpd.  
+
+```{r final models}
+prelim_m <- lm(fm1000 ~ (tmmn + tmmx + pr) * cli + srad * season + vpd + vs + p, data = wf_data_e)
+final_m <- m12
+auto_m <- lm(fm1000 ~., data = wf_data_e)
+auto_mi <- lm(fm1000 ~ bi + pet + p
+              + season * (erc + rmax + rmin + fm100 + sph + vs)
+              + cli * (erc + rmax + fm100 + bi + vpd + rmin + sph), data = wf_data_e)
+
+# Residuals vs Predictor Plots (Preliminary Model (final_m))
+res_vs_pred_plots(prelim_m, "Preliminary Model")
+
+# Refit the final preliminary model on wf_data
+final_m_wfdata <- lm(
+  log(fm1000) ~ (tmmx + pr) * cli +
+    srad * season + sqrt(vpd) + vs + p,
+  data = wf_data
+)
+
+
+# VIF table for Final Preliminary Model (prelim_m BUT WITH data = wf_data)
+library(knitr)
+
+vif_prelim <- car::vif(final_m_wfdata)
+
+kable(vif_prelim, 
+      caption = "VIF Table – Final Preliminary Model",
+      digits = 2)
+
+
+# VIF table for Forward BIC Model (mfi_bic)
+bic_formula <- formula(mfi_bic)
+
+# Refit the model (removes aliased terms)
+mfi_bic_refit <- lm(bic_formula, data = wf_data_e)
+
+# Compute VIF table
+vif_mfi_bic <- car::vif(mfi_bic_refit)
+
+kable(vif_mfi_bic, 
+      caption = "VIF Table – Forward BIC Model Model",
+      digits = 2)
+
+```
+
+```{r final models graphs}
+# Function to give the 4 diagnostic plots
+diagnostic_plots <- function(model, model_name = "model") {
+  par(mfrow = c(2, 2))
+
+  plot(
+    model,
+    main = model_name,
+    id.n = 0,            
+    labels.id = FALSE,   
+    cook.levels = NULL, 
+    cook.legend = FALSE  
+  )
+
+  par(mfrow = c(1, 1))
+}
+
+# diagnostic plots:
+# 1. Preliminary Model
+prelim_m_grapg <- diagnostic_plots(prelim_m, "Preliminary Model")
+
+# 2. Final Preliminary Model
+diagnostic_plots(final_m, "Final Preliminary Model")
+
+# 3. Full Automated Model
+diagnostic_plots(auto_m, "Full Automated Model")
+
+# 4. Automated Model with Interactions
+diagnostic_plots(auto_mi, "Auto Model with Interactions")
+
+## Summary of final prelim_m model 
+library(broom)
+library(knitr)
+library(dplyr)
+
+# Turn model summary into a clean table
+summary_chart <- broom::tidy(final_m, conf.int = TRUE) %>%
+  mutate(
+    estimate = round(estimate, 3),
+    std.error = round(std.error, 3),
+    statistic = round(statistic, 3),
+    p.value = round(p.value, 4),
+    conf.low = round(conf.low, 3),
+    conf.high = round(conf.high, 3)
+  )
+
+kable(
+  summary_chart,
+  caption = "Summary Table – Final Preliminary Model",
+  digits = 3,
+  align = "c"
+)
+```
+
+## Validating Models  
+
+```{r k-fold cross validation}
+# 10-fold cross validation
+train_control <- trainControl(method = "cv", number = 10)
+
+# Train our final models
+cv_prelim_m <- train(formula(prelim_m), data = wf_data_e, method = "lm", trControl = train_control)
+cv_final_m <- train(formula(final_m), data = wf_data_e, method = "lm", trControl = train_control)
+cv_auto_m <- train(formula(auto_m), data = wf_data_e, method = "lm", trControl = train_control)
+cv_auto_mi <- train(formula(auto_mi), data = wf_data_e, method = "lm", trControl = train_control)
+
+# Print the validation results
+cv_metrics <- rbind(
+  Prelim = cv_prelim_m$results,
+  Final = cv_final_m$results,
+  Auto = cv_auto_m$results,
+  Auto_Inter = cv_auto_mi$results
+)
+
+cv_metrics
+```
+
+Due the sheer number of observations, we choose to run a 10-fold cross validation instead of LOOCV, reducing computational complexity and allowing us to compare out-of-sample error with MSE. From the results, we see that our transformed preliminary model has improved greatly with a higher R^2 and substantially lower MSE. On the other hand, the models from automated variable selection algorithms have a near perfect R^2 but a bigger MSE. This is to be expected because the auto models have much stronger predictive powers due to the number of variables and interactions included. The drawback is that it's harder to interpret, especially through the inclusion of various indices which are based on the meteorlogical variables themselves, like erc or bi. The strength of our final model lies in it's simplicity. Using only the necessary variables, we can actually explain the relationship between spatiotemporal and meteorological conditions and how it effects fm1000.  
+
+To further verify our models, we want to see whether or not it's a bad fit for non-wildfire events. If it is a good fit, then our models can't significantly distinguish between wildfire and non-wildfire events, meaning it's prediction power is diminished.  
+
+```{r non-wildfire comparsion}
+full_data <- data[data$cli != "E", -c(1, 2, 3)]
+full_data$cli <- droplevels(full_data$cli)
+
+# Fit our models to full dataset
+full_fm <- lm(log(fm1000) ~ Wildfire * ((tmmx + pr) * cli + srad * season + sqrt(vpd) + vs + p),
+              data = full_data)
+full_am <- lm(fm1000 ~ Wildfire * (bi + pet + p
+              + season * (erc + rmax + rmin + fm100 + sph + vs)
+              + cli * (erc + rmax + fm100 + bi + vpd + rmin + sph)), 
+              data = full_data)
+
+# Reduce our models to full dataset
+red_fm <- lm(log(fm1000) ~ (tmmx + pr) * cli + srad * season + sqrt(vpd) + vs + p,
+              data = full_data)
+red_am <- lm(fm1000 ~ bi + pet + p
+              + season * (erc + rmax + rmin + fm100 + sph + vs)
+              + cli * (erc + rmax + fm100 + bi + vpd + rmin + sph), 
+              data = full_data)
+
+# Partial F-tests for significance
+anova(red_fm, full_fm)
+anova(red_am, full_am)
+```
+
+Fitting our model to the full dataset, which includes non-wildfire events, we see that the partial F-tests comparing a full model with Wildfire and all of it's interactions and a reduced model without Wildfire is significant for both our final model and automated with interactions model. This confirms that the pattern between variables differ significantly between wildfires and non-wildfires.  
+
+## Interpretation and Predictions  
+
+Using our final model for interpretability, the significiant negative coefficients are srad, sqrt(vpd), and tmmx \* cli (excluding cliA). Again, this is consistent with scientific evidence because higher srad encourages evaporation and higher sqrt(vpd) means the actual vapor pressure is lower so the air is less humid. Even though tmmx has positive coefficient in cliA or tropical climates, this is explained by the fact that tropical climates experience frequent precipitation. So a higher tmmx would lead to more humid air (which dries out the fuel less). In other less precipitate climates, tmmx has a negative coefficient. Based on the categorical variables, in colder seasons and climates with more precipitation and live vegetation, there is an increase in fm1000, which supports our previous findings with the weather conditions. Thus, our findings show that the biggest impacts on fm1000 is the temperature, vapor-pressure deficit, solar radiation and fuel availability and efficacy dependent on the time of year and climate zone.  
+
+```{r model_risk}
+model_risk <- function(model, point, threshold) {
+  n <- nrow(model.matrix(model))
+  p <- length(coef(model))
+  k <- qt(0.975, df = n - p)
+  
+  pred <- predict(model, newdata = point, interval = "prediction")
+  
+  se_pred <- (pred[,"upr"] - pred[,"fit"]) / k
+  
+  t <- (log(threshold) - pred[,"fit"]) / se_pred
+  
+  prob <- pt(t, df = n - p)
+  
+  return(prob)
+}
+```
+
+Given that a MLR model satisfies Y|X ~ N(X$\beta$, $\sigma^2$), we used the prediction interval for a given observation to quantify risk. The function model_risk uses the distribution of the prediction interval for a future observation to find the probability of log(fm1000) being less than some pre-defined threshold, usually around ~15-10% based on region and climate. Note that even though we're using our final model instead of the automated with interactions model because there is some evidence of overfitting with the higher adjusted R^2 and MSE. Additionally, since our final model is easier to interpret and more accurate due to it's lower MSE, it was selected to predict and quantify risk.   
+
+```{r Figures}
+install.packages("maps")
+
+df <- read.csv("Cleaned_Wildfire_Dataset.csv")
+
+# FIGURE 1
+ 
+library(ggplot2)
+library(maps)
+
+# Load US map outline
+us_map <- map_data("state")
+
+# Recode climate zones to descriptive names
+df$cli_zone <- factor(
+   df$cli,
+   levels = c("A", "B", "C", "D", "E"),
+   labels = c(
+     "Tropical (A)",
+     "Arid / Dry (B)",
+     "Temperate (C)",
+     "Cold / Continental (D)",
+     "Polar (E)"
+   )
+ )
+ 
+# Create the plot
+ggplot() +
+   # U.S. map outline
+   geom_polygon(
+     data = us_map,
+     aes(x = long, y = lat, group = group),
+     fill = "gray95",
+     color = "black",
+     size = 0.2
+   ) +
+   
+   # Wildfire observation points, colored by climate zone
+   geom_point(
+     data = df,
+     aes(x = longitude, y = latitude, color = cli_zone),
+     alpha = 0.5,
+     size = 0.7
+   ) +
+   
+   # Color palette for climate zones
+   scale_color_brewer(palette = "Dark2", name = "Climate Zone") +
+   
+   # Titles and labels
+   labs(
+     title = "Figure 1.\nSpatial Distribution of Wildfire Observations Across Climate Zones",
+     x = "Longitude",
+     y = "Latitude"
+   ) +
+   
+   coord_fixed(1.3) +
+   
+   theme_minimal(base_size = 14) +
+   theme(
+     plot.title = element_text(
+       hjust = 0.5,
+       size = 14,
+       face = "bold",
+       margin = margin(t = 10, b = 10)
+     ),
+     plot.margin = margin(t = 20, r = 20, b = 20, l = 20),
+     legend.position = "right",
+     panel.grid = element_blank()
+   )
+
+
+# FIGURE 2:
+# Install if needed:
+# install.packages("ggplot2")
+
+library(ggplot2)
+
+# Recode climate zones to descriptive names (skip if already done earlier)
+df$cli_zone <- factor(
+  df$cli,
+  levels = c("A", "B", "C", "D", "E"),
+  labels = c(
+    "Tropical (A)",
+    "Arid / Dry (B)",
+    "Temperate (C)",
+    "Cold / Continental (D)",
+    "Polar (E)"
+  )
+)
+
+# Create Figure 2: Boxplot of fm1000 by climate zone
+ggplot(df, aes(x = cli_zone, y = fm1000, fill = cli_zone)) +
+  geom_boxplot(outlier.alpha = 0.15) +
+  labs(
+    title = "Figure 2.\nfm1000 Variation Across Climate Zones",
+    x = "Climate Zone",
+    y = "fm1000 (%)"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(
+      hjust = 0.5,
+      size = 14,
+      face = "bold",
+      margin = margin(t = 10, b = 10)
+    ),
+    plot.margin = margin(t = 20, r = 20, b = 20, l = 20),
+    legend.position = "none",              # hide redundant legend
+    panel.grid.major.x = element_blank(),  # cleaner boxplot look
+    axis.text.x = element_text(angle = 20, hjust = 1)
+  )
+
+
+```
