@@ -14,7 +14,7 @@ knitr::opts_chunk$set(
 ```
 
 ```{r data-cleaning, eval=FALSE}
-# Load wildfire dataset, change the name in the line below to what you named the original dataset file that you downloaded
+# Load wildfire dataset, change the file name in the line below to what you named the original dataset file that you downloaded
 d <- read.csv("wildfire_dataset.csv")
 d$id <- rep(1:(nrow(d) / 75), each = 75)
 
