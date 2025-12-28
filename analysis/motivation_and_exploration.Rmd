@@ -32,7 +32,7 @@ The results of this study will help researchers through wildfire risk model vali
 
 ```{r data loading and cleaning}
 # Load wildfire dataset and save it to data
-data <- read.csv("/Users/Mustafa/Documents/sta302proj/Wildfire_Dataset.csv")
+data <- read.csv("/Users/eiqan/Downloads/Wildfire_Dataset.csv")
 
 # Removing unnecessary columns
 data <- data[, c("datetime", "latitude", "longitude", "Wildfire", "tmmn", "tmmx", "pr", "vpd", "srad", "vs", "fm1000")]
